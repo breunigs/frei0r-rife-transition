@@ -1,0 +1,5 @@
+[submodule "rife-ncnn-vulkan"]
+	path = rife-ncnn-vulkan
+	url = https://github.com/TNTwise/rife-ncnn-vulkan
+	shallow = true
+	ignore = dirty
