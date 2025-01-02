@@ -32,13 +32,25 @@ cat << EOF >> "${SUBDIR}/CMakeLists.txt"
   target_link_libraries(rife_transition \${RIFE_LINK_LIBRARIES})
 EOF
 
-mkdir -p build
-cd build/
+inputs=("${0}" "rife_transition.cpp" "${PWD}/${EMBEDDED_MODEL}/flownet.bin" "${PWD}/${EMBEDDED_MODEL}/flownet.param")
+newest_mtime=0
+for file in "${inputs[@]}"; do
+  mtime=$(stat -c %Y "$file")
+  if [ "$newest_mtime" -lt "$mtime" ]; then newest_mtime="$mtime"; fi
+done
+output=$(stat -c %Y "rife_transition.so")
 
-wait
+if [ "$output" -lt "$newest_mtime" ]; then
+  mtime_formatted=$(date -d "@$newest_mtime" +'%Y-%m-%d %H:%M:%S')
+  (cd "${SUBDIR}/" && touch --no-dereference -d "${mtime_formatted}" rife_transition.cpp CMakeLists.txt flownet.bin flownet.param)
 
-${LOW_PRIO} cmake -DUSE_SYSTEM_WEBP=ON "../${SUBDIR}"
-${LOW_PRIO} cmake --build . -j
+  mkdir -p build
+  cd build/
 
-mv librife_transition.so ../rife_transition.so
+  ${LOW_PRIO} cmake -DUSE_SYSTEM_WEBP=ON "../${SUBDIR}"
+  ${LOW_PRIO} cmake --build . -j
+
+  mv librife_transition.so ../rife_transition.so
+fi
+
 echo "Plugin built and saved as rife_transition.so (embedded ${EMBEDDED_MODEL})"
