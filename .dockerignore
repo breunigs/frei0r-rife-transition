@@ -1,4 +1,7 @@
 **/*
 
-!CMakeLists.txt
-!jsonblur.cpp
+!rife-ncnn-vulkan
+!.git
+!.gitmodules
+!build.sh
+!*.cpp

@@ -8,17 +8,31 @@ often hides cuts very well.
 
 ### Building
 
-```bash
-apt-get install cmake binutils git bash
+##### 1. Clone
 
+```bash
 git clone https://github.com/breunigs/frei0r-rife-transition
 cd frei0r-rife-transition
+```
 
+#### 2a. Build locally
+
+```bash
+apt-get install cmake binutils git bash
 ./build.sh
 # or possibly ./install.sh
 ```
 
-#### ffmpeg
+#### 2b. build in container
+
+```bash
+# submodules are automatically cloned within Docker, but this caches them
+# outside on the host.
+git submodule update --init --recursive --depth 0
+DOCKER_BUILDKIT=1 docker build -o type=local,dest=. --target artifacts .
+```
+
+#### 3. ffmpeg
 
 As of writing, upstream ffmpeg doesn't support frei0r mixer plugins. You'll need
 to build it yourself until the patch is merged upstream. See [ffmpeg's

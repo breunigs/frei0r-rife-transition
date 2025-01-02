@@ -16,6 +16,9 @@ ln -s --force "${PWD}/${EMBEDDED_MODEL}/flownet.bin" "${SUBDIR}/flownet.bin"
 ln -s --force "${PWD}/${EMBEDDED_MODEL}/flownet.param" "${SUBDIR}/flownet.param"
 
 (cd "${SUBDIR}" && git checkout CMakeLists.txt)
+sed -i '/target_link_libraries/d' "${SUBDIR}/CMakeLists.txt"
+sed -i '/add_executable(rife-ncnn-vulkan/,/)/d' "${SUBDIR}/CMakeLists.txt"
+sed -i '/add_dependencies(rife-ncnn-vulkan/,/)/d' "${SUBDIR}/CMakeLists.txt"
 cat << EOF >> "${SUBDIR}/CMakeLists.txt"
   add_custom_command(
       OUTPUT flownetbin.o
@@ -32,7 +35,8 @@ cat << EOF >> "${SUBDIR}/CMakeLists.txt"
   set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
   add_library (rife_transition MODULE rife_transition.cpp rife.cpp warp.cpp flownetbin.o flownetparam.o)
-  target_link_libraries(rife_transition \${RIFE_LINK_LIBRARIES})
+  add_dependencies(rife_transition generate-spirv)
+  target_link_libraries(rife_transition ncnn \${Vulkan_LIBRARY})
 EOF
 
 inputs=("${0}" "rife_transition.cpp" "${PWD}/${EMBEDDED_MODEL}/flownet.bin" "${PWD}/${EMBEDDED_MODEL}/flownet.param")
@@ -41,7 +45,7 @@ for file in "${inputs[@]}"; do
   mtime=$(stat -c %Y "$file")
   if [ "$newest_mtime" -lt "$mtime" ]; then newest_mtime="$mtime"; fi
 done
-output=$(stat -c %Y "rife_transition.so")
+output=$(stat -c %Y "rife_transition.so" || echo "0")
 
 if [ "$output" -lt "$newest_mtime" ]; then
   mtime_formatted=$(date -d "@$newest_mtime" +'%Y-%m-%d %H:%M:%S')
