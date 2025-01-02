@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <ftw.h>
+#include <format>
 #include <stdio.h>
 #include <unistd.h>
 #include <vector>
@@ -24,9 +25,18 @@ public:
         m_size = width * height * sizeof(uint32_t);
         m_device = ncnn::get_default_gpu_index();
         m_model_path = "";
-        register_param(m_duration, "duration", "seconds; duration of the transition (i.e. the two videos overlapping)");
-        register_param(m_model_path, "model_path", "Path to model directory with flownet.{bin,param} files.");
-        register_param(m_device, "device", "select which GPU to use for calculations. cpu=-1 gpu0=0 gpu1=1 and so on.");
+        register_param(m_duration,
+                       "duration",
+                       std::format("seconds; duration of the transition (i.e. the two videos overlapping). Default: {}",
+                                   m_duration));
+        register_param(m_model_path,
+                       "model_path",
+                       "Path to model directory with flownet.{bin,param} files. Default: @@EMBEDDED_MODEL_NAME@@");
+        register_param(
+            m_device,
+            "device",
+            std::format("select which GPU to use for calculations. cpu=-1 gpu0=0 gpu1=1 and so on. Default: gpu{}",
+                        m_device));
     }
 
     ~RifeTransition() { uninit_rife(); }

@@ -10,7 +10,7 @@ SUBDIR="rife-ncnn-vulkan/src"
 [ -d "${SUBDIR}" ] || git submodule update --init --recursive --depth 0
 
 cp "./rife_transition.cpp" "${SUBDIR}/rife_transition.cpp"
-sed -i "s/@@EMBEDDED_MODEL_NAME@@/$(basename $EMBEDDED_MODEL)/" "${SUBDIR}/rife_transition.cpp"
+sed -i "s/@@EMBEDDED_MODEL_NAME@@/$(basename $EMBEDDED_MODEL)/g" "${SUBDIR}/rife_transition.cpp"
 
 ln -s --force "${PWD}/${EMBEDDED_MODEL}/flownet.bin" "${SUBDIR}/flownet.bin"
 ln -s --force "${PWD}/${EMBEDDED_MODEL}/flownet.param" "${SUBDIR}/flownet.param"
@@ -27,6 +27,9 @@ cat << EOF >> "${SUBDIR}/CMakeLists.txt"
       COMMAND ld -r -b binary flownet.param -o flownetparam.o -m elf_x86_64
       DEPENDS flownet.param
       WORKING_DIRECTORY \${CMAKE_CURRENT_SOURCE_DIR})
+
+  set(CMAKE_CXX_STANDARD 20)
+  set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
   add_library (rife_transition MODULE rife_transition.cpp rife.cpp warp.cpp flownetbin.o flownetparam.o)
   target_link_libraries(rife_transition \${RIFE_LINK_LIBRARIES})
