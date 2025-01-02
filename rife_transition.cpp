@@ -37,27 +37,40 @@ public:
             "device",
             std::format("select which GPU to use for calculations. cpu=-1 gpu0=0 gpu1=1 and so on. Default: gpu{}",
                         m_device));
+        register_param(m_debug, "debug", "print verbose/debug information to stderr");
     }
 
     ~RifeTransition() { uninit_rife(); }
 
-    virtual void update(double time_ms, uint32_t *out, const uint32_t *in1, const uint32_t *in2) {
+    virtual void update(double time_s, uint32_t *out, const uint32_t *in1, const uint32_t *in2) {
+        debug("update called for time=", time_s, "s");
+
         if (m_duration <= 0.0) {
+            debug("duration is smaller than 0, copying second input");
             memcpy(out, in2, m_size);
             return;
         }
 
-        const double time_s = time_ms / 1000.0;
-        if (m_start < 0.0) m_start = time_s;
-
-        float ratio = (time_s - m_start) / m_duration;
-        if (ratio >= 1.0) {
-            memcpy(out, in2, m_size);
-            if (m_loaded) return;
+        double ratio = 0.0;
+        if (m_start < 0.0) {
+            debug("setting m_start=", time_s, "s");
+            m_start = time_s;
+        } else {
+            ratio = (time_s - m_start) / m_duration;
+            if (ratio > 1.0) {
+                debug("ratio=", ratio, " is beyond transition period, copying input2");
+                memcpy(out, in2, m_size);
+                return;
+            }
         }
+
+        ratio = std::max(ratio, m_bump_extremes);
+        ratio = std::min(ratio, 1.0 - m_bump_extremes);
+        debug("ratio=", ratio);
 
         init_rife();
         if (!m_loaded) {
+            debug("RIFE model not loaded, falling back to memcpy");
             memcpy(out, in2, m_size);
             return;
         }
@@ -76,6 +89,7 @@ public:
             memcpy(out, in2, m_size);
             return;
         }
+        debug("rendered interpolation ratio=", ratio);
 
         rgb2rgba((const uint8_t *)oimg.data, out, width, height);
     }
@@ -87,8 +101,20 @@ private:
     uint32_t m_size;
     std::string m_model_path;
     bool m_loaded = false;
+    double m_debug = 0.0;
+    const double m_bump_extremes = 0.05;
     int padding;
     RIFE *m_rife;
+
+    template <typename... Args>
+    void debug(Args... args) {
+        if (m_debug > 0.5) {
+            std::ostringstream oss;
+            oss << "DEBUG: ";
+            (oss << ... << args);
+            std::cerr << oss.str() << "\n";
+        }
+    }
 
     std::vector<uint8_t> rgba2rgb(const uint32_t *in, size_t width, size_t height) {
         std::vector<uint8_t> rgb_buffer(width * height * 3);
@@ -128,6 +154,7 @@ private:
         if (m_model_path.find("rife-v4.25-lite") != std::string::npos) padding = 128;
         if (m_model_path.find("rife-v4.26") != std::string::npos) padding = 64;
         // TODO error handling if model unsupported?
+        debug("padding=", padding);
 
         int device = static_cast<int>(m_device);
         if (device != -1) ncnn::create_gpu_instance();
@@ -137,8 +164,10 @@ private:
             ncnn::destroy_gpu_instance();
             return;
         }
+        debug("device=", device);
 
         if (m_duration <= 0.0) std::cerr << "WARNING: transition period should be greater than zero\n";
+        debug("transition duration=", m_duration, "s");
 
         m_loaded = true;
         m_rife = new RIFE(device,
@@ -149,8 +178,10 @@ private:
                           false /* rife_v2 */,
                           true /* rife_v4 */,
                           padding);
+        debug("initialized RIFE");
 
         m_rife->load(m_model_path);
+        debug("loaded model @ ", m_model_path);
 
         if (has_temp) nftw(m_model_path.c_str(), delete_file, 64, FTW_DEPTH | FTW_PHYS);
     }
@@ -159,6 +190,8 @@ private:
         if (!m_loaded) return;
         m_loaded = false;
         if (!m_rife) return;
+
+        debug("destroying RIFE instance");
 
         delete m_rife;
         if (static_cast<int>(m_device) != -1) ncnn::destroy_gpu_instance();
@@ -187,6 +220,7 @@ private:
             fclose(outfile);
         }
 
+        debug("wrote embedded model to ", m_model_path);
         return true;
     }
 
@@ -198,4 +232,4 @@ private:
 };
 
 frei0r::construct<RifeTransition> plugin(
-    "rife_transition", "Transition between two videos using RIFE", "Stefan Breunig", 0, 1, F0R_COLOR_MODEL_RGBA8888);
+    "rife_transition", "Transition between two videos using RIFE", "Stefan Breunig", 0, 2, F0R_COLOR_MODEL_RGBA8888);

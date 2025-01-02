@@ -51,11 +51,11 @@ make -j
 ```bash
 ffmpeg \
   -i 'A.mp4' \
-   -i 'B.mp4' \
-   -filter_complex '[0][1]frei0r=filter_name=rife_transition:filter_params=0.2669:inputs=2[out]' \
-   -map '[out]' \
-   -pix_fmt yuv420p \
-   -f yuv4mpegpipe - \
+  -i 'B.mp4' \
+  -filter_complex '[0][1]frei0r=filter_name=rife_transition:filter_params=0.2669[out]' \
+  -map '[out]' \
+  -pix_fmt yuv420p \
+  -f yuv4mpegpipe - \
 | mpv -
 ```
 
@@ -64,8 +64,103 @@ using RIFE. In the beginning the frames are mostly from the first input. Towards
 the end of the transition duration, they're mostly from the second input.
 Afterwards it will solely return frames from the second input.
 
+
+#### Complex Example
+
 For performance reasons, it's probably beneficial to not run the filter longer
-than the duration to avoid copying each frame.
+than the duration to avoid copying each frame. Here's a more complex example
+which joins two videos with some time before and after. Note that the timestamps
+within `-filter_complex` are relative to the offsets specified via `-ss`:
+
+```bash
+ffmpeg \
+  -hwaccel auto \
+  -loglevel verbose \
+  -nostats \
+  \
+  -ss 00:00:03.000 \
+  -to 00:00:04.000 \
+  -i 'input1.mp4' \
+  \
+  -ss 00:00:02.000 \
+  -to 00:00:03.000 \
+  -i 'input2.mp4' \
+  \
+  -filter_complex '
+    [0]segment=timestamps=0.68[prev0][trans0];
+    [1]segment=timestamps=0.36[trans1][next1];
+
+    [prev0]setpts=PTS-STARTPTS[prev0];
+    [trans0]setpts=PTS-STARTPTS[trans0];
+    [trans1]setpts=PTS-STARTPTS[trans1];
+    [next1]setpts=PTS-STARTPTS[next1];
+
+    [trans0][trans1]frei0r=filter_name=rife_transition:filter_params=0.32||0|1[trans01];
+
+    [prev0][trans01][next1]concat=n=3[out]
+  ' \
+  -map '[out]' \
+  -pix_fmt yuv420p \
+  -r 25 \
+  -f yuv4mpegpipe \
+  - | \
+  mpv \
+  --pause \
+  --no-terminal \
+  -
+```
+
+In more detail, this is how the `-filter_complex` works:
+
+1. Assuming input fps=25, then a frame is shown for 0.04s. Let's decide on a
+   transition duration of around 0.32s.
+
+   Both inputs are exactly 1s long, due to the `-ss` and `-to` flags. We need to
+   split the first input from the end, i.e. 1s - 0.32s = 0.68s.
+
+   ```
+   [0]segment=timestamps=0.68[prev0][trans0];
+   ```
+
+2. Similarly, we want the first 0.32s of the second input, i.e. we split from
+   the start. Due to the transition segments being taken once from the end (first
+   input) and once from the start (second input) their duration is off-by-one
+   frame. To combat that, there are three options:
+
+   - shorten first's input transition segment duration by one frame: `0.68s +
+     0.04s = 0.72s`
+   - extend second's input transition segment duration by one frame: `0.32s +
+     0.04s = 0.36s`
+   - add `shortest=1` as a frei0r filter option and drop one frame
+
+   ```
+   [1]segment=timestamps=0.36[trans1][next1];
+   ```
+
+3. Reset all frame timestamps to start at 0 again. Otherwise the video will
+   "hang" or "skip" parts because the timestamps are funky.
+
+   ```
+   [prev0]setpts=PTS-STARTPTS[prev0];
+   [trans0]setpts=PTS-STARTPTS[trans0];
+   [trans1]setpts=PTS-STARTPTS[trans1];
+   [next1]setpts=PTS-STARTPTS[next1];
+   ```
+
+4. Transition for 0.32s, using the embedded model, on GPU0 and enable debug
+   printout.
+
+   ```
+   [trans0][trans1]frei0r=filter_name=rife_transition:filter_params=0.32||0|1[trans01];
+   ```
+
+5. Concatenate all segments together for the final video.
+
+   ```
+   [prev0][trans01][next1]concat=n=3[out]
+   ```
+
+### Plugin configuration
 
 The filter is configured like any other frei0r filter. See [upstream ffmpeg
 filter documentation](https://ffmpeg.org/ffmpeg-filters.html#frei0r-1) for more
@@ -82,3 +177,4 @@ The plugin accepts these parameters:
 * `device`, integer, optional, specifies which GPU to use, where the first GPU
   is `0`, the second `1` and so on. CPU is `-1`, but the results were broken on
   my machine.
+* `debug`, bool, optional, set to `1` to print debug info to stderr
