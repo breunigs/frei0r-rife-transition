@@ -51,22 +51,19 @@ public:
             return;
         }
 
-        double ratio = 0.0;
+        double ratio = m_offset_ratio;
         if (m_start < 0.0) {
             debug("setting m_start=", time_s, "s");
             m_start = time_s;
         } else {
-            ratio = (time_s - m_start) / m_duration;
+            ratio = (time_s - m_start) / m_duration + m_offset_ratio;
             if (ratio > 1.0) {
                 debug("ratio=", ratio, " is beyond transition period, copying input2");
                 memcpy(out, in2, m_size);
                 return;
             }
         }
-
-        ratio = std::max(ratio, m_bump_extremes);
-        ratio = std::min(ratio, 1.0 - m_bump_extremes);
-        debug("ratio=", ratio);
+        debug("selecting ratio=", ratio);
 
         init_rife();
         if (!m_loaded) {
@@ -102,7 +99,9 @@ private:
     std::string m_model_path;
     bool m_loaded = false;
     double m_debug = 0.0;
-    const double m_bump_extremes = 0.05;
+    // how much to offset the ratio to avoid the first frame transition being
+    // wasted (i.e. ratio=0 → fully copy frame from video1)
+    const double m_offset_ratio = 0.05;
     int padding;
     RIFE *m_rife;
 
