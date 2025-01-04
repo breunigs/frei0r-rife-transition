@@ -5,6 +5,28 @@ frei0r plugin wrapper around
 transition two videos using RIFE to calculate the intermediate images. This
 often hides cuts very well.
 
+Generally speaking, the RIFE algorithm is more forgiving if the camera path,
+recording angle, or position ("translation") are not the same. Especially
+when the camera is moving, RIFE makes it easier for the viewer to not get
+disoriented, even when artifacts are visible. This somewhat also works for
+camera movement speed changes, although the abrupt slow-down or speed-up
+will be noticable.
+
+Here's two examples comparing the RIFE results vs a classic crossfade transition.
+The camera speed for each transition is roughly matched, but position, angle are
+different. 
+
+- https://github.com/user-attachments/assets/afd1a0c0-e818-4d3b-8995-4df30ba76390
+
+- https://github.com/user-attachments/assets/a932f69d-0e3f-480b-a4eb-e895d897cb25
+
+- https://github.com/user-attachments/assets/8f8d536b-65b3-4c2e-9043-a18d22979287
+
+- https://github.com/user-attachments/assets/690392d4-18c7-49a9-b1b0-8edb2fa9e6ab
+
+Note that the transition section chosen for each pair of videos is "optimal".
+Other sections differ more in angle, position and speed. Of course, this was
+only eyeballed by n=2, and not for all possible combinations.
 
 ### Building
 
