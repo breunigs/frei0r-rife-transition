@@ -87,11 +87,13 @@ public:
             return;
         }
         debug("rendered interpolation ratio=", ratio);
+        m_count += 1;
 
         rgb2rgba((const uint8_t *)oimg.data, out, width, height);
     }
 
 private:
+    int m_count = 0;
     double m_duration;
     double m_device;
     double m_start;
@@ -186,6 +188,9 @@ private:
     }
 
     void uninit_rife() {
+        debug("RENDERED ", m_count, " RIFE FRAMEs");
+        m_count = 0;
+
         if (!m_loaded) return;
         m_loaded = false;
         if (!m_rife) return;
