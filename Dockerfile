@@ -14,7 +14,7 @@ RUN apt-get update --yes \
   && rm -rf /var/lib/apt/lists/*
 
 COPY . /build/
-RUN ls -alh /build/ && ./build.sh
+RUN ./build.sh
 
 FROM scratch AS artifacts
 COPY --from=build /build/rife_transition.so /
