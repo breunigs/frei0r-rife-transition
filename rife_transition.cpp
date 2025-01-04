@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <filesystem>
-#include <ftw.h>
 #include <format>
+#include <ftw.h>
+#include <map>
+#include <mutex>
 #include <stdio.h>
 #include <unistd.h>
 #include <vector>
@@ -13,14 +15,165 @@
 #include "platform.h"
 #include "rife.h"
 
-const double defaultFPS = 30000 / 1001;
-const int defaultFadeFrames = 8;
-const double defaultDuration = 1.0 / defaultFPS * defaultFadeFrames;
+const double g_default_fps = 30000 / 1001;
+const int g_default_fade_frames = 8;
+const double g_default_duration = 1.0 / g_default_fps * g_default_fade_frames;
+
+std::mutex g_mutex;
+bool g_debug = false;
+
+template <typename... Args>
+void debug(Args... args) {
+    if (g_debug) {
+        std::ostringstream oss;
+        oss << "DEBUG: ";
+        (oss << ... << args);
+        std::cerr << oss.str() << "\n";
+    }
+}
+
+class Loader {
+public:
+    static Loader &getInstance() {
+        static Loader instance;
+        return instance;
+    }
+
+    int process(std::string model_path, int device, ncnn::Mat mat1, ncnn::Mat mat2, double ratio, ncnn::Mat oimg) {
+        std::lock_guard<std::mutex> guard(g_mutex);
+        auto model = get_or_init_rife(model_path, device);
+        if (!model) return -31337;
+
+        return model->process(mat1, mat2, ratio, oimg);
+    }
+
+    Loader(Loader const &) = delete;
+    void operator=(Loader const &) = delete;
+
+private:
+    Loader() {}
+
+    typedef std::tuple<std::string, int> rifeKey;
+    std::map<rifeKey, RIFE *> m_rife_map;
+
+    bool m_gpu_initialized = false;
+
+    RIFE *get_or_init_rife(std::string model_path, int device) {
+        rifeKey key = std::make_tuple(model_path, device);
+        auto memoized = m_rife_map.find(key);
+        if (memoized != m_rife_map.end()) {
+            return memoized->second;
+        }
+
+        bool has_temp = false;
+        if (model_path == "") {
+            has_temp = true;
+            model_path = write_embedded_model();
+        }
+        if (model_path == "") {
+            std::cerr << "ERROR: No model specified and failed to write embedded model\n";
+            return NULL;
+        }
+
+        if (model_path.find("rife-v4") == std::string::npos) {
+            std::cerr << "ERROR: Model path (" << model_path
+                      << ") must contain version somewhere in path name (e.g. /tmp/rife-v4.25/).\n";
+            return NULL;
+        }
+
+        int padding = 32;
+        if (model_path.find("rife-v4.25") != std::string::npos) padding = 64;
+        if (model_path.find("rife-v4.25-lite") != std::string::npos) padding = 128;
+        if (model_path.find("rife-v4.26") != std::string::npos) padding = 64;
+        // TODO error handling if model unsupported?
+        debug("padding=", padding);
+
+        if (device != -1) initialize_gpu();
+
+        if (device >= ncnn::get_gpu_count()) {
+            std::cerr << "ERROR: cannot run on device=" << device << ", not that many GPUs detected.\n";
+            ncnn::destroy_gpu_instance();
+            return NULL;
+        }
+        debug("device=", device);
+
+        RIFE *rife = new RIFE(device,
+                              0 /* tta_mode */,
+                              0 /* tta_temporal_mode */,
+                              false /* uhd mode */,
+                              1 /* num_threads */,
+                              false /* rife_v2 */,
+                              true /* rife_v4 */,
+                              padding);
+        debug("initialized RIFE");
+
+        rife->load(model_path);
+        debug("loaded model @ ", model_path);
+
+        if (has_temp) nftw(model_path.c_str(), delete_file, 64, FTW_DEPTH | FTW_PHYS);
+
+        m_rife_map[key] = rife;
+        return rife;
+    }
+
+    // frei0r uninits only at the end of the filter pipeline, so without some
+    // other hack like "ratio > 1.0", we cannot unload RIFE ahead of time. We'd
+    // also need some kind of counter for the still active plugins to avoid
+    // discarding it too early. Since this is effort, and we don't gain much,
+    // uninit is not implemented at the moment.
+
+    // void uninit_rife() {
+    //     debug("destroying RIFE instance");
+    //     // iterate over m_rife_map and clean it up?
+    //     if (m_gpu_initialized) ncnn::destroy_gpu_instance();
+    // }
+
+    void initialize_gpu() {
+        if (m_gpu_initialized) return;
+        ncnn::create_gpu_instance();
+        m_gpu_initialized = true;
+    }
+
+    std::string write_embedded_model() {
+        std::string model_path = std::filesystem::temp_directory_path();
+        model_path += "/@@EMBEDDED_MODEL_NAME@@";
+        std::filesystem::create_directories(model_path);
+
+        extern const char _binary_flownet_param_start, _binary_flownet_param_end;
+        const char *flownet_param = &_binary_flownet_param_start;
+        const size_t flownet_param_len = &_binary_flownet_param_end - &_binary_flownet_param_start;
+        auto outfile = fopen((model_path + "/flownet.param").c_str(), "wb");
+        if (outfile == NULL) {
+            debug("failed writing model to dir", model_path);
+            return "";
+        }
+        fwrite(flownet_param, 1, flownet_param_len, outfile);
+        fclose(outfile);
+
+        extern const char _binary_flownet_bin_start, _binary_flownet_bin_end;
+        const char *flownet_bin = &_binary_flownet_bin_start;
+        const size_t flownet_bin_len = &_binary_flownet_bin_end - &_binary_flownet_bin_start;
+        outfile = fopen((model_path + "/flownet.bin").c_str(), "wb");
+        if (outfile != NULL) {
+            fwrite(flownet_bin, 1, flownet_bin_len, outfile);
+            fclose(outfile);
+        }
+
+        debug("wrote embedded model to ", model_path);
+        return model_path;
+    }
+
+    static int delete_file(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
+        int rv = remove(fpath);
+        if (rv) perror(fpath);
+        return rv;
+    }
+};
 
 class RifeTransition : public frei0r::mixer2 {
 public:
     RifeTransition(unsigned int width, unsigned int height) {
-        m_duration = defaultDuration;
+        m_duration = g_default_duration;
         m_start = -1.0;
         m_size = width * height * sizeof(uint32_t);
         m_device = ncnn::get_default_gpu_index();
@@ -40,13 +193,18 @@ public:
         register_param(m_debug, "debug", "print verbose/debug information to stderr");
     }
 
-    ~RifeTransition() { uninit_rife(); }
+    ~RifeTransition() {}
 
     virtual void update(double time_s, uint32_t *out, const uint32_t *in1, const uint32_t *in2) {
+        g_debug = m_debug > 0.5;
         debug("update called for time=", time_s, "s");
 
         if (m_duration <= 0.0) {
-            debug("duration is smaller than 0, copying second input");
+            if (m_start < 0.0) {
+                std::cerr << "WARNING: transition period should be greater than zero\n";
+            } else {
+                debug("duration is smaller than 0, copying second input");
+            }
             memcpy(out, in2, m_size);
             return;
         }
@@ -55,22 +213,17 @@ public:
         if (m_start < 0.0) {
             debug("setting m_start=", time_s, "s");
             m_start = time_s;
+            m_count = 0;
         } else {
             ratio = (time_s - m_start) / m_duration + m_offset_ratio;
             if (ratio > 1.0) {
                 debug("ratio=", ratio, " is beyond transition period, copying input2");
+                debug("created ", m_count, " RIFE frames");
                 memcpy(out, in2, m_size);
                 return;
             }
         }
         debug("selecting ratio=", ratio);
-
-        init_rife();
-        if (!m_loaded) {
-            debug("RIFE model not loaded, falling back to memcpy");
-            memcpy(out, in2, m_size);
-            return;
-        }
 
         std::vector<uint8_t> rgb1 = rgba2rgb(in1, width, height);
         ncnn::Mat mat1 = ncnn::Mat(width, height, rgb1.data(), (size_t)3, 3);
@@ -80,7 +233,8 @@ public:
 
         ncnn::Mat oimg = ncnn::Mat(width, height, (size_t)3, 3);
 
-        int ret = m_rife->process(mat1, mat2, ratio, oimg);
+        int device = static_cast<int>(m_device);
+        int ret = Loader::getInstance().process(m_model_path, device, mat1, mat2, ratio, oimg);
         if (ret < 0) {
             std::cerr << "WARNING: RIFE at ratio=" << ratio << "failed with ret=" << ret << "\n";
             memcpy(out, in2, m_size);
@@ -99,23 +253,10 @@ private:
     double m_start;
     uint32_t m_size;
     std::string m_model_path;
-    bool m_loaded = false;
     double m_debug = 0.0;
     // how much to offset the ratio to avoid the first frame transition being
     // wasted (i.e. ratio=0 → fully copy frame from video1)
-    const double m_offset_ratio = 0.05;
-    int padding;
-    RIFE *m_rife;
-
-    template <typename... Args>
-    void debug(Args... args) {
-        if (m_debug > 0.5) {
-            std::ostringstream oss;
-            oss << "DEBUG: ";
-            (oss << ... << args);
-            std::cerr << oss.str() << "\n";
-        }
-    }
+    const double m_offset_ratio = 0.03;
 
     std::vector<uint8_t> rgba2rgb(const uint32_t *in, size_t width, size_t height) {
         std::vector<uint8_t> rgb_buffer(width * height * 3);
@@ -137,101 +278,6 @@ private:
             uint8_t b = rgb[i * 3 + 2];
             out[i] = (0xFF << 24) | (b << 16) | (g << 8) | r; // Adding alpha channel (0xFF)
         }
-    }
-
-    void init_rife() {
-        if (m_loaded) return;
-
-        bool has_temp = (m_model_path == "") ? write_embedded_model() : false;
-
-        if (m_model_path.find("rife-v4") == std::string::npos) {
-            std::cerr << "ERROR: Model path (" << m_model_path
-                      << ") must contain version somewhere in path name (e.g. /tmp/rife-v4.25/).\n";
-            return;
-        }
-
-        padding = 32;
-        if (m_model_path.find("rife-v4.25") != std::string::npos) padding = 64;
-        if (m_model_path.find("rife-v4.25-lite") != std::string::npos) padding = 128;
-        if (m_model_path.find("rife-v4.26") != std::string::npos) padding = 64;
-        // TODO error handling if model unsupported?
-        debug("padding=", padding);
-
-        int device = static_cast<int>(m_device);
-        if (device != -1) ncnn::create_gpu_instance();
-
-        if (device >= ncnn::get_gpu_count()) {
-            std::cerr << "ERROR: cannot run on device=" << device << ", not that many GPUs detected.\n";
-            ncnn::destroy_gpu_instance();
-            return;
-        }
-        debug("device=", device);
-
-        if (m_duration <= 0.0) std::cerr << "WARNING: transition period should be greater than zero\n";
-        debug("transition duration=", m_duration, "s");
-
-        m_loaded = true;
-        m_rife = new RIFE(device,
-                          0 /* tta_mode */,
-                          0 /* tta_temporal_mode */,
-                          false /* uhd mode */,
-                          1 /* num_threads */,
-                          false /* rife_v2 */,
-                          true /* rife_v4 */,
-                          padding);
-        debug("initialized RIFE");
-
-        m_rife->load(m_model_path);
-        debug("loaded model @ ", m_model_path);
-
-        if (has_temp) nftw(m_model_path.c_str(), delete_file, 64, FTW_DEPTH | FTW_PHYS);
-    }
-
-    void uninit_rife() {
-        debug("RENDERED ", m_count, " RIFE FRAMEs");
-        m_count = 0;
-
-        if (!m_loaded) return;
-        m_loaded = false;
-        if (!m_rife) return;
-
-        debug("destroying RIFE instance");
-
-        delete m_rife;
-        if (static_cast<int>(m_device) != -1) ncnn::destroy_gpu_instance();
-    }
-
-    bool write_embedded_model() {
-        m_model_path = std::filesystem::temp_directory_path();
-        m_model_path += "/@@EMBEDDED_MODEL_NAME@@";
-        std::filesystem::create_directories(m_model_path);
-
-        extern const char _binary_flownet_param_start, _binary_flownet_param_end;
-        const char *flownet_param = &_binary_flownet_param_start;
-        const size_t flownet_param_len = &_binary_flownet_param_end - &_binary_flownet_param_start;
-        auto outfile = fopen((m_model_path + "/flownet.param").c_str(), "wb");
-        if (outfile != NULL) {
-            fwrite(flownet_param, 1, flownet_param_len, outfile);
-            fclose(outfile);
-        }
-
-        extern const char _binary_flownet_bin_start, _binary_flownet_bin_end;
-        const char *flownet_bin = &_binary_flownet_bin_start;
-        const size_t flownet_bin_len = &_binary_flownet_bin_end - &_binary_flownet_bin_start;
-        outfile = fopen((m_model_path + "/flownet.bin").c_str(), "wb");
-        if (outfile != NULL) {
-            fwrite(flownet_bin, 1, flownet_bin_len, outfile);
-            fclose(outfile);
-        }
-
-        debug("wrote embedded model to ", m_model_path);
-        return true;
-    }
-
-    static int delete_file(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
-        int rv = remove(fpath);
-        if (rv) perror(fpath);
-        return rv;
     }
 };
 
