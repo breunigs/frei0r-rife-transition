@@ -7,7 +7,7 @@ export EMBEDDED_MODEL=./rife-ncnn-vulkan/models/rife-v4.26/
 LOW_PRIO="/usr/bin/chrt --idle 0 /usr/bin/nice -n19 /usr/bin/ionice --class idle"
 
 SUBDIR="rife-ncnn-vulkan/src"
-[ -d "${SUBDIR}" ] || git submodule update --init --recursive --depth 0
+[ -d "${SUBDIR}" ] || git submodule update --init --recursive --depth 0 -j 3
 
 cp "./rife_transition.cpp" "${SUBDIR}/rife_transition.cpp"
 sed -i "s/@@EMBEDDED_MODEL_NAME@@/$(basename $EMBEDDED_MODEL)/g" "${SUBDIR}/rife_transition.cpp"

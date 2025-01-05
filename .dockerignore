@@ -1,6 +1,5 @@
 **/*
 
-!rife-ncnn-vulkan
 !.git
 !.gitmodules
 !build.sh

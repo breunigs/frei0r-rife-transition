@@ -1,9 +1,10 @@
 FROM debian:testing-slim AS build
-WORKDIR /build/
+WORKDIR /src/
 
 RUN apt-get update --yes \
   && apt-get install --yes --no-install-recommends \
   bash \
+  ca-certificates \
   cmake \
   frei0r-plugins-dev \
   g++ \
@@ -13,8 +14,11 @@ RUN apt-get update --yes \
   make \
   && rm -rf /var/lib/apt/lists/*
 
-COPY . /build/
-RUN ./build.sh
+COPY . /src/
+RUN \
+  --mount=type=cache,target=/src/build/ \
+  --mount=type=cache,target=/src/rife-ncnn-vulkan/ \
+  /src/build.sh
 
 FROM scratch AS artifacts
-COPY --from=build /build/rife_transition.so /
+COPY --from=build /src/rife_transition.so /
