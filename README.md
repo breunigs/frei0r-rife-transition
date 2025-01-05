@@ -28,6 +28,18 @@ Note that the transition section chosen for each pair of videos is "optimal".
 Other sections differ more in angle, position and speed. Of course, this was
 only eyeballed by n=2, and not for all possible combinations.
 
+### Downloading
+
+You can download a [release
+version](https://github.com/breunigs/frei0r-rife-transition/releases/) or the
+build artifact [attached to every
+build](https://github.com/breunigs/frei0r-rife-transition/actions).
+Currently only linux/amd64 artifacts are being built.
+
+Place the `rife_transition.so` in a frei0r PATH, usually `~/.frei0r-1/lib/`.
+Note that you'll most likely need a custom ffmpeg build, see [building
+ffmpeg](#3-ffmpeg).
+
 ### Building
 
 ##### 1. Clone
