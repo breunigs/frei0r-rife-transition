@@ -22,20 +22,25 @@ sed -i '/add_dependencies(rife-ncnn-vulkan/,/)/d' "${SUBDIR}/CMakeLists.txt"
 cat << EOF >> "${SUBDIR}/CMakeLists.txt"
   add_custom_command(
       OUTPUT flownetbin.o
-      COMMAND ld -r -b binary flownet.bin -o flownetbin.o -m elf_x86_64
+      COMMAND ld -r -b binary flownet.bin -o \${CMAKE_BINARY_DIR}/flownetbin.o -m elf_x86_64
       DEPENDS flownet.bin
       WORKING_DIRECTORY \${CMAKE_CURRENT_SOURCE_DIR})
   add_custom_command(
       OUTPUT flownetparam.o
-      COMMAND ld -r -b binary flownet.param -o flownetparam.o -m elf_x86_64
+      COMMAND ld -r -b binary flownet.param -o \${CMAKE_BINARY_DIR}/flownetparam.o -m elf_x86_64
       DEPENDS flownet.param
       WORKING_DIRECTORY \${CMAKE_CURRENT_SOURCE_DIR})
+
+  add_custom_target(
+      generate-embedded-flownet
+      DEPENDS \${CMAKE_BINARY_DIR}/flownetbin.o \${CMAKE_BINARY_DIR}/flownetparam.o
+  )
 
   set(CMAKE_CXX_STANDARD 20)
   set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
   add_library (rife_transition MODULE rife_transition.cpp rife.cpp warp.cpp flownetbin.o flownetparam.o)
-  add_dependencies(rife_transition generate-spirv)
+  add_dependencies(rife_transition generate-spirv generate-embedded-flownet)
   target_link_libraries(rife_transition ncnn \${Vulkan_LIBRARY})
 EOF
 
