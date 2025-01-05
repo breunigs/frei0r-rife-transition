@@ -1,8 +1,12 @@
 name: Build Docker Image
+permissions:
+  contents: write
 
 on:
   push:
     branches:
+      - '**'
+    tags:
       - '**'
 
 jobs:
@@ -23,3 +27,9 @@ jobs:
           name: rife_transition.so-${{ github.sha }}
           path: ./rife_transition.so
           if-no-files-found: error
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: ./rife_transition.so
