@@ -90,7 +90,10 @@ private:
         // TODO error handling if model unsupported?
         debug("padding=", padding);
 
-        if (device != -1) initialize_gpu();
+        if (device != -1) {
+            debug("initializing GPU");
+            initialize_gpu();
+        }
 
         if (device >= ncnn::get_gpu_count()) {
             std::cerr << "ERROR: cannot run on device=" << device << ", not that many GPUs detected.\n";
