@@ -64,6 +64,7 @@ private:
         if (memoized != m_rife_map.end()) {
             return memoized->second;
         }
+        m_rife_map[key] = NULL;
 
         bool has_temp = false;
         if (model_path == "") {
