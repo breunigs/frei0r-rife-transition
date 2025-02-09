@@ -135,8 +135,11 @@ private:
     }
 
     std::string write_embedded_model() {
+        std::string random = std::tmpnam(nullptr);
         std::string model_path = std::filesystem::temp_directory_path();
-        model_path += "/@@EMBEDDED_MODEL_NAME@@";
+        model_path += "/";
+        model_path += random;
+        model_path += "-@@EMBEDDED_MODEL_NAME@@";
         std::filesystem::create_directories(model_path);
 
         extern const char _binary_flownet_param_start, _binary_flownet_param_end;
