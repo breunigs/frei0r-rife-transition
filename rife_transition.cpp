@@ -7,6 +7,7 @@
 #include <map>
 #include <mutex>
 #include <stdio.h>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
@@ -102,7 +103,7 @@ private:
                               0 /* tta_mode */,
                               0 /* tta_temporal_mode */,
                               false /* uhd mode */,
-                              1 /* num_threads */,
+                              thread_count() /* num_threads */,
                               false /* rife_v2 */,
                               true /* rife_v4 */,
                               padding);
@@ -133,6 +134,12 @@ private:
         if (m_gpu_initialized) return;
         ncnn::create_gpu_instance();
         m_gpu_initialized = true;
+    }
+
+    int thread_count() {
+        const auto count = std::thread::hardware_concurrency();
+        if (count == 0) return 1;
+        return count / 2;
     }
 
     std::string write_embedded_model() {
