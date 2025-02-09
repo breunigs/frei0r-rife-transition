@@ -146,10 +146,7 @@ private:
     }
 
     std::string write_embedded_model() {
-        std::string random = std::tmpnam(nullptr);
-        std::string model_path = std::filesystem::temp_directory_path();
-        model_path += "/";
-        model_path += random;
+        std::string model_path = std::tmpnam(nullptr);
         model_path += "-@@EMBEDDED_MODEL_NAME@@";
         std::filesystem::create_directories(model_path);
 
