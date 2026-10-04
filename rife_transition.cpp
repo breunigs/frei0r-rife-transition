@@ -1,12 +1,17 @@
 #include "frei0r.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <format>
+#include <fstream>
 #include <ftw.h>
 #include <map>
 #include <mutex>
+#include <sstream>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -202,13 +207,27 @@ public:
             std::format("select which GPU to use for calculations. cpu=-1 gpu0=0 gpu1=1 and so on. Default: gpu{}",
                         m_device));
         register_param(m_debug, "debug", "print verbose/debug information to stderr");
+        register_param(m_ratios,
+                       "ratios",
+                       "enables interpolation mode: comma separated list of ratios (doubles), or a path to a file "
+                       "holding one ratio per line. Requires output_fps to be set.");
+        register_param(m_output_fps, "output_fps", "frame rate of the output; required when ratios is given");
     }
 
-    ~RifeTransition() {}
+    ~RifeTransition() {
+        if (!m_ratios.empty()) debug("created ", m_count, " RIFE frames");
+    }
 
     virtual void update(double time_s, uint32_t *out, const uint32_t *in1, const uint32_t *in2) {
         g_debug = m_debug > 0.5;
         debug("update called for time=", time_s, "s");
+
+        // interpolation mode must be checked before the m_duration early-out
+        // below, because callers pass duration=0 in that mode
+        if (!m_ratios.empty()) {
+            update_interpolate(time_s, out, in1, in2);
+            return;
+        }
 
         if (m_duration <= 0.0) {
             if (m_start < 0.0) {
@@ -236,6 +255,28 @@ public:
         }
         debug("selecting ratio=", ratio);
 
+        render(ratio, out, in1, in2);
+    }
+
+private:
+    int m_count = 0;
+    double m_duration;
+    double m_device;
+    double m_start;
+    uint32_t m_size;
+    std::string m_model_path;
+    double m_debug = 0.0;
+    std::string m_ratios;
+    double m_output_fps = 0.0;
+    // parsed form of m_ratios, plus the string it was parsed from so changed
+    // params are picked up
+    std::vector<double> m_ratios_parsed;
+    bool m_ratios_valid = false;
+    std::string m_ratios_source;
+    bool m_warned_range = false;
+    bool m_warned_fps = false;
+
+    void render(double ratio, uint32_t *out, const uint32_t *in1, const uint32_t *in2) {
         std::vector<uint8_t> rgb1 = rgba2rgb(in1, width, height);
         ncnn::Mat mat1 = ncnn::Mat(width, height, rgb1.data(), (size_t)3, 3);
 
@@ -257,14 +298,97 @@ public:
         rgb2rgba((const uint8_t *)oimg.data, out, width, height);
     }
 
-private:
-    int m_count = 0;
-    double m_duration;
-    double m_device;
-    double m_start;
-    uint32_t m_size;
-    std::string m_model_path;
-    double m_debug = 0.0;
+    // Interpolation mode: the ratio for each output frame is given by the
+    // caller. in1/in2 bracket the output timestamp, i.e. in2 holds the source
+    // frame immediately following in1. Stateless on purpose: the index is
+    // derived from the timestamp, not from a call counter.
+    void update_interpolate(double time_s, uint32_t *out, const uint32_t *in1, const uint32_t *in2) {
+        if (m_output_fps <= 0.0) {
+            if (!m_warned_fps) {
+                m_warned_fps = true;
+                std::cerr << "ERROR: output_fps must be set when ratios is given\n";
+            }
+            memcpy(out, in1, m_size);
+            return;
+        }
+
+        parse_ratios();
+        if (m_ratios_parsed.empty()) {
+            memcpy(out, in1, m_size);
+            return;
+        }
+
+        const long n = static_cast<long>(m_ratios_parsed.size());
+        const long idx = std::lround(time_s * m_output_fps);
+        if ((idx < 0 || idx >= n) && !m_warned_range) {
+            m_warned_range = true;
+            std::cerr << "WARNING: ratio index " << idx << " (time=" << time_s << "s) is outside of the " << n
+                      << " given ratios, clamping. Logged once.\n";
+        }
+        const double ratio = m_ratios_parsed[std::clamp(idx, 0L, n - 1)];
+        debug("interpolating idx=", idx, " ratio=", ratio);
+
+        // no nudge here: ratio=0 must be exactly in1, ratio=1 exactly in2
+        if (ratio <= 0.0) {
+            debug("ratio<=0, copying first input");
+            memcpy(out, in1, m_size);
+            return;
+        }
+        if (ratio >= 1.0) {
+            debug("ratio>=1, copying second input");
+            memcpy(out, in2, m_size);
+            return;
+        }
+
+        render(ratio, out, in1, in2);
+    }
+
+    void parse_ratios() {
+        if (m_ratios_valid && m_ratios_source == m_ratios) return;
+        m_ratios_valid = true;
+        m_ratios_source = m_ratios;
+        m_ratios_parsed.clear();
+
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(m_ratios, ec)) {
+            std::ifstream file(m_ratios);
+            if (!file) {
+                std::cerr << "ERROR: failed to open ratios file " << m_ratios << "\n";
+                return;
+            }
+            std::string line;
+            while (std::getline(file, line)) {
+                append_ratio(line);
+            }
+            debug("read ", m_ratios_parsed.size(), " ratios from ", m_ratios);
+        } else {
+            std::istringstream stream(m_ratios);
+            std::string entry;
+            while (std::getline(stream, entry, ',')) {
+                append_ratio(entry);
+            }
+            debug("parsed ", m_ratios_parsed.size(), " inline ratios");
+        }
+
+        if (m_ratios_parsed.empty()) std::cerr << "ERROR: ratios given, but none could be parsed\n";
+    }
+
+    // ncnn is built without exceptions, so no std::stod here
+    void append_ratio(const std::string &raw) {
+        const char *begin = raw.c_str();
+        char *end = nullptr;
+        double value = std::strtod(begin, &end);
+        if (end != begin) {
+            m_ratios_parsed.push_back(value);
+            return;
+        }
+        // blank lines and trailing separators are expected, anything else is
+        // worth reporting
+        if (raw.find_first_not_of(" \t\r\n") != std::string::npos) {
+            std::cerr << "WARNING: ignoring unparsable ratio \"" << raw << "\"\n";
+        }
+    }
+
     // how much to offset the ratio to avoid the first frame transition being
     // wasted (i.e. ratio=0 → fully copy frame from video1)
     const double m_offset_ratio = 0.03;

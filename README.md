@@ -209,10 +209,56 @@ The plugin accepts these parameters:
   is `0`, the second `1` and so on. CPU is `-1`, but the results were broken on
   my machine.
 * `debug`, bool, optional, set to `1` to print debug info to stderr
+* `ratios`, string, optional, enables interpolation mode (see below). Either a
+  comma separated list of doubles, or a path to a file with one value per line.
+  Use the file form for long lists: commas must be escaped in filtergraph
+  syntax, and command lines have a length limit.
+* `output_fps`, double, required when `ratios` is set, the frame rate of the
+  output.
+
+The parameter order is fixed, because ffmpeg reads `filter_params` positionally
+and stops when the string runs out. `ratios` and `output_fps` are appended at
+the end.
+
+### Interpolation mode
+
+Set `ratios` to generate frames on demand instead of running a transition, for
+example to slow footage down. For every output frame the plugin looks up a ratio
+and interpolates between the two inputs with it:
+
+```
+idx = round(timestamp * output_fps)
+r   = ratios[clamp(idx, 0, n-1)]
+```
+
+A ratio of `0.0` copies the first input, `1.0` copies the second input, and
+anything in between calls RIFE. Real frames are therefore passed through
+untouched, with no model call.
+
+The two inputs are the same source split in two, with one branch delayed by
+exactly one source frame. That way the second input always carries the frame
+following the first input, and the two bracket every output timestamp:
+
+```bash
+ffmpeg \
+  -i 'input.mp4' \
+  -filter_complex "
+    [0:v]split[x][y];
+    [x]setpts='<warp>/TB',fps=<output_fps>:round=down[a];
+    [y]setpts=PTS-<1/src_fps>/TB,setpts='<warp>/TB',fps=<output_fps>:round=down[b];
+    [a][b]frei0r=filter_name=rife_transition:filter_params=0||0|0|/path/to/ratios.txt|<output_fps>[out]
+  " \
+  -map '[out]' \
+  output.mp4
+```
+
+`duration` is unused in this mode, so passing `0` is fine. `<warp>` is the
+expression mapping output time to source time.
 
 ### Tests
 
-`./test.sh` renders a counter video through the plugin and compares the result
+`./test.sh` renders a counter video through the plugin and checks both modes.
+The interpolation checks are self contained; the transition check compares
 against a baseline recorded with the previous build:
 
 ```bash
