@@ -209,3 +209,13 @@ The plugin accepts these parameters:
   is `0`, the second `1` and so on. CPU is `-1`, but the results were broken on
   my machine.
 * `debug`, bool, optional, set to `1` to print debug info to stderr
+
+### Tests
+
+`./test.sh` renders a counter video through the plugin and compares the result
+against a baseline recorded with the previous build:
+
+```bash
+git stash && ./install.sh && ./test.sh --record
+git stash pop && ./install.sh && ./test.sh
+```
