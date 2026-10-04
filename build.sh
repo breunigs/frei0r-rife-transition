@@ -59,7 +59,9 @@ if [ "$output" -lt "$newest_mtime" ]; then
   mkdir -p build
   cd build/
 
-  ${LOW_PRIO} cmake -DUSE_SYSTEM_WEBP=ON "../${SUBDIR}"
+  # the bundled ncnn still asks for cmake_minimum_required < 3.5, which cmake
+  # 4+ refuses outright
+  ${LOW_PRIO} cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DUSE_SYSTEM_WEBP=ON "../${SUBDIR}"
   ${LOW_PRIO} cmake --build . -j
 
   mv librife_transition.so ../rife_transition.so
